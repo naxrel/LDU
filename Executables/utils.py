@@ -12,10 +12,6 @@ from stegano import lsb
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.backends import default_backend
-import wave
-import math
-import struct
-import random
 
 # --- [BARU] Impor White-Mist ---
 # (Asumsi file WhiteMist.py ada di direktori yang sama)

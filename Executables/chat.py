@@ -15,14 +15,9 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QFont, QColor, QPixmap
 from PySide6.QtCore import Qt, QSize, QTimer
 from datetime import datetime, timezone 
-import winsound # Diperlukan untuk fitur Audio
 
-# Pastikan utils.py ada di satu folder yang sama dan sudah memiliki fungsi audio
-from utils import (
-    CryptoEngine, vigenere_encrypt, vigenere_decrypt, 
-    encrypt_whitemist, decrypt_whitemist,
-    text_to_alien_audio, alien_audio_to_text
-)
+# Pastikan utils.py ada di satu folder yang sama
+from utils import CryptoEngine, vigenere_encrypt, vigenere_decrypt, encrypt_whitemist, decrypt_whitemist
 
 class ChatPage(QWidget):
     
@@ -70,13 +65,11 @@ class ChatPage(QWidget):
         self.temp_stegano_dir = os.path.join(self.base_data_dir, "temp_stegano")
         self.temp_download_dir = os.path.join(self.base_data_dir, "temp_downloads")
         self.temp_decrypted_dir = os.path.join(self.base_data_dir, "temp_decrypted")
-        self.temp_audio_dir = os.path.join(self.base_data_dir, "temp_audio") # [BARU: Folder Audio]
         
         # [OPTIMASI] Set untuk melacak ID pesan yang SUDAH tampil di layar.
         self.rendered_message_ids = set()
         
-        # Buat semua folder yang diperlukan
-        for folder in [self.base_data_dir, self.cache_dir, self.temp_stegano_dir, self.temp_download_dir, self.temp_decrypted_dir, self.temp_audio_dir]:
+        for folder in [self.base_data_dir, self.cache_dir, self.temp_stegano_dir, self.temp_download_dir, self.temp_decrypted_dir]:
             if not os.path.exists(folder):
                 os.makedirs(folder)
 
@@ -95,7 +88,7 @@ class ChatPage(QWidget):
         msg_type = metadata.get('type')
         if msg_type == 'text':
             return hashlib.md5(metadata.get('data', '').encode('utf-8')).hexdigest()
-        elif msg_type in ['stegano', 'file', 'audio_secret']: # [UPDATE: Support Audio ID]
+        elif msg_type in ['stegano', 'file']:
             return metadata.get('file_id')
         return None
 
@@ -163,8 +156,6 @@ class ChatPage(QWidget):
         self.chat_display.itemClicked.connect(self.on_chat_item_clicked)
 
         input_bar_layout = QHBoxLayout()
-        
-        # --- BUTTONS ---
         self.attach_btn = QPushButton("🖼️ Gbr"); self.attach_btn.setToolTip("Sembunyikan teks dari input ke dalam Gambar (.png)")
         self.attach_btn.setFont(QFont("Segoe UI", 12)); 
         self.attach_btn.setStyleSheet(self.button_style(
@@ -181,17 +172,6 @@ class ChatPage(QWidget):
         ))
         self.attach_file_btn.setFixedSize(70, 45)
         self.attach_file_btn.clicked.connect(self.handle_attach_file) 
-        
-        # [BARU] Tombol Audio
-        self.attach_audio_btn = QPushButton("📡 Audio"); 
-        self.attach_audio_btn.setToolTip("Ubah teks menjadi Audio Alien (WAV)")
-        self.attach_audio_btn.setFont(QFont("Segoe UI", 12)); 
-        self.attach_audio_btn.setStyleSheet(self.button_style(
-            base=self.COLOR_CARD, hover=self.COLOR_CARD_HOVER, pressed=self.COLOR_CARD_BG, radius=10
-        ))
-        self.attach_audio_btn.setFixedSize(70, 45)
-        self.attach_audio_btn.clicked.connect(self.handle_attach_audio)
-        # -------------------
 
         self.message_input = QLineEdit(); self.message_input.setPlaceholderText("Ketik pesan...")
         self.message_input.setStyleSheet(self.input_style()) 
@@ -206,12 +186,8 @@ class ChatPage(QWidget):
         self.send_btn.setFixedSize(100, 45)
         self.send_btn.clicked.connect(self.handle_send_message_super)
 
-        input_bar_layout.addWidget(self.attach_btn); 
-        input_bar_layout.addWidget(self.attach_file_btn)
-        input_bar_layout.addWidget(self.attach_audio_btn) # [BARU]
-        input_bar_layout.addWidget(self.message_input); 
-        input_bar_layout.addWidget(self.send_btn)
-        
+        input_bar_layout.addWidget(self.attach_btn); input_bar_layout.addWidget(self.attach_file_btn)
+        input_bar_layout.addWidget(self.message_input); input_bar_layout.addWidget(self.send_btn)
         layout.addLayout(top_bar_layout); layout.addWidget(self.chat_display); layout.addLayout(input_bar_layout)
         
     def handle_back_pressed(self):
@@ -272,81 +248,6 @@ class ChatPage(QWidget):
             
         except Exception as e: 
             self.add_message_to_display("error", metadata=None, error_text=f"--- Error Super Enkripsi: {e} ---")
-
-    # [BARU: HANDLER AUDIO ALIEN]
-    def handle_attach_audio(self):
-        """
-        Handler untuk fitur Text-to-Audio (Alien Sound).
-        Mengubah teks menjadi file WAV dengan frekuensi unik per karakter.
-        """
-        text, ok = QInputDialog.getText(self, "Kirim Pesan Audio", "Masukkan teks rahasia (akan diubah jadi Audio):")
-        if not ok or not text: return
-        
-        key, ok_key = QInputDialog.getText(self, "Enkripsi", "Masukkan Kunci VIGENERE (untuk teks di dalam audio):")
-        if not ok_key or not key: return
-        
-        loading_dialog = QDialog(self)
-        loading_dialog.setWindowTitle("Processing Audio...")
-        loading_dialog.setFixedSize(300, 100)
-        l = QVBoxLayout(loading_dialog)
-        status_label = QLabel("Mengenkripsi & Generate Audio...")
-        status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        l.addWidget(status_label)
-        loading_dialog.show()
-        QApplication.processEvents()
-        
-        try:
-            # 1. Enkripsi Teks (Vigenere -> WhiteMist)
-            vigenere_ciphertext = vigenere_encrypt(text, key)
-            whitemist_ciphertext = encrypt_whitemist(vigenere_ciphertext.encode('utf-8'), key, is_text=True)
-            
-            # 2. Generate Audio WAV
-            temp_filename = f"audio_{uuid.uuid4().hex}.wav"
-            temp_path = os.path.join(self.temp_audio_dir, temp_filename)
-            
-            success = text_to_alien_audio(whitemist_ciphertext, temp_path)
-            if not success:
-                raise Exception("Gagal membuat file audio.")
-            
-            # 3. Upload File WAV
-            status_label.setText("Mengupload Audio...")
-            QApplication.processEvents()
-            
-            with open(temp_path, 'rb') as f:
-                upload_url = f"{self.api_url}/upload_file/{self.chat_id}"
-                files = {'file': (temp_filename, f, 'audio/wav')}
-                response = requests.post(upload_url, files=files, timeout=60)
-                
-            if response.status_code != 200 or not response.json().get("success"):
-                raise Exception(f"Gagal upload: {response.text}")
-            
-            file_id = response.json().get('file_id')
-            if not file_id:
-                raise Exception("Server tidak mengembalikan file_id.")
-            
-            # 4. Kirim Pesan Metadata
-            message_data = {
-                "type": "audio_secret",
-                "file_id": file_id,
-                "sender": self.current_user,
-                "recipient": self.recipient_username,
-                "filename": temp_filename,
-                "db_timestamp": datetime.now(timezone.utc).astimezone().isoformat(),
-                "text_key_debug": key  # Debug only
-            }
-            
-            self.message_manager.save_message(self.chat_id, message_data)
-            
-            # Simpan pesan asli ke cache agar sender bisa melihat history-nya
-            message_id = self.get_message_id(message_data)
-            self.save_to_cache(message_id, text)
-
-            loading_dialog.close()
-            self.refresh_chat_display()
-            
-        except Exception as e:
-            loading_dialog.close()
-            self.add_message_to_display("error", metadata=None, error_text=f"--- Error Audio: {e} ---")
 
     # --- [FIX: PERBAIKAN ENKRIPSI STEGANO DENGAN HEADER] ---
     def handle_attach_image_stegano(self):
@@ -664,112 +565,6 @@ class ChatPage(QWidget):
                         except Exception as e:
                             QMessageBox.critical(self, "Gagal Dekripsi", f"Error: {e}\nKey mungkin salah atau data korup.")
 
-            # --- [BARU: Handle Audio Secret Click] ---
-            elif msg_type == 'audio_secret' and file_id:
-                filename = metadata.get('filename', f"{file_id}.wav")
-                local_audio_path = os.path.join(self.temp_audio_dir, file_id)
-                
-                # Download jika belum ada
-                if not os.path.exists(local_audio_path):
-                    loading_dialog = self.show_loading_dialog(filename)
-                    download_url = f"{self.api_url}/download_file/{self.chat_id}/{file_id}"
-                    try:
-                        response = requests.get(download_url, timeout=30)
-                        if response.status_code == 200:
-                            with open(local_audio_path, 'wb') as f:
-                                f.write(response.content)
-                        else:
-                            loading_dialog.close()
-                            QMessageBox.critical(self, "Error", f"Gagal download audio: {response.status_code}")
-                            return
-                    except Exception as e:
-                        loading_dialog.close()
-                        QMessageBox.critical(self, "Error", f"Error download: {e}")
-                        return
-                    loading_dialog.close()
-                
-                # Tampilkan opsi: Play atau Decrypt
-                msg_box = QMessageBox(self)
-                msg_box.setWindowTitle("Pesan Audio (Alien)")
-                msg_box.setText("Pilih aksi untuk pesan audio ini:")
-                play_btn = msg_box.addButton("🔊 Play Audio", QMessageBox.ActionRole)
-                decrypt_btn = msg_box.addButton("🔐 Dekripsi Pesan", QMessageBox.ActionRole)
-                msg_box.addButton(QMessageBox.Cancel)
-                msg_box.exec()
-                
-                if msg_box.clickedButton() == play_btn:
-                    try:
-                        winsound.PlaySound(local_audio_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
-                    except Exception as e:
-                        QMessageBox.critical(self, "Error", f"Gagal memutar audio: {e}")
-                        
-                elif msg_box.clickedButton() == decrypt_btn:
-                    key, ok = QInputDialog.getText(self, "Dekripsi Audio", "Masukkan Kunci VIGENERE:")
-                    if not ok or not key:
-                        return
-                    
-                    try:
-                        # 1. Decode audio -> encrypted text
-                        encrypted_text = alien_audio_to_text(local_audio_path)
-                        if not encrypted_text:
-                            raise Exception("Gagal decode audio menjadi text. File mungkin korup atau bukan audio alien.")
-                        
-                        # 2. Decrypt White-Mist
-                        whitemist_decrypted_bytes = decrypt_whitemist(encrypted_text, key)
-                        vigenere_ciphertext = whitemist_decrypted_bytes.decode('utf-8')
-                        
-                        # 3. Decrypt Vigenere
-                        decrypted_message = vigenere_decrypt(vigenere_ciphertext, key)
-                        
-                        # Tampilkan hasil
-                        result_dialog = QDialog(self)
-                        result_dialog.setWindowTitle("Pesan Audio Terdekripsi")
-                        result_dialog.setMinimumSize(500, 400)
-                        result_dialog.setStyleSheet(f"background-color: {self.COLOR_BACKGROUND}; color: {self.COLOR_TEXT};")
-                        
-                        layout = QVBoxLayout(result_dialog)
-                        layout.addWidget(QLabel("Isi Pesan:"))
-                        text_edit = QTextEdit()
-                        text_edit.setPlainText(decrypted_message)
-                        text_edit.setReadOnly(True)
-                        text_edit.setStyleSheet(f"""
-                            QTextEdit {{
-                                background-color: {self.COLOR_PANE_LEFT};
-                                color: {self.COLOR_TEXT};
-                                border: 2px solid {self.COLOR_GOLD};
-                                border-radius: 8px;
-                                padding: 10px;
-                                font-size: 14px;
-                            }}
-                        """)
-                        layout.addWidget(text_edit)
-                        
-                        close_btn = QPushButton("Tutup")
-                        close_btn.clicked.connect(result_dialog.close)
-                        close_btn.setStyleSheet(self.button_style(
-                            base=self.COLOR_GOLD, hover=self.COLOR_GOLD_HOVER, 
-                            pressed=self.COLOR_GOLD_PRESSED, radius=10, text_color=self.COLOR_PANE_LEFT
-                        ))
-                        layout.addWidget(close_btn)
-                        
-                        # Cache hasil dekripsi
-                        message_id = self.get_message_id(metadata)
-                        self.save_to_cache(message_id, decrypted_message)
-                        
-                        result_dialog.exec()
-                        
-                        # Update bubble
-                        new_widget = self.create_chat_bubble("received" if metadata['sender'] != self.current_user else "sent", metadata, decrypted_message, item)
-                        new_widget.layout().activate()
-                        new_widget.adjustSize()
-                        real_size = new_widget.size()
-                        real_size.setHeight(real_size.height() + 10)
-                        item.setSizeHint(real_size)
-                        self.chat_display.setItemWidget(item, new_widget)
-                        
-                    except Exception as e:
-                        QMessageBox.critical(self, "Gagal Dekripsi", f"Error: {e}\nKey mungkin salah atau data korup.")
-
         except Exception as e:
             print(f"Error di on_chat_item_clicked: {e}")
             debug_key = metadata.get('aes_key_debug') or metadata.get('text_key_debug', 'TIDAK DIKETAHUI')
@@ -797,7 +592,6 @@ class ChatPage(QWidget):
         msg_type = metadata.get('type', 'unknown')
         content_max_width = (self.width() * 0.7) - 24
         
-        # --- SENDER NAME ---
         if align == "sent":
             name_label = QLabel("YOU")
             name_label.setFont(QFont("Segoe UI", 10, QFont.Bold))
@@ -810,7 +604,6 @@ class ChatPage(QWidget):
             name_label.setStyleSheet(f"color: {self.COLOR_GOLD};")
             bubble_content_layout.addWidget(name_label)
         
-        # --- CONTENT ---
         if msg_type == 'text':
             display_text = cached_data if cached_data else "[Pesan Teks Super-Terenkripsi]"
             content_label = QLabel(display_text)
@@ -863,33 +656,6 @@ class ChatPage(QWidget):
             content_label.setStyleSheet(f"color: {self.COLOR_TEXT_SUBTLE}; font-size: 14px; font-style: italic;")
             content_label.setMinimumHeight(30)
             bubble_content_layout.addWidget(content_label)
-        
-        # [BARU: BUBBLE AUDIO ALIEN]
-        elif msg_type == 'audio_secret':
-            icon_lbl = QLabel("📡")
-            icon_lbl.setFont(QFont("Segoe UI", 24))
-            icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            bubble_content_layout.addWidget(icon_lbl)
-            
-            lbl = QLabel("Pesan Suara (Alien)")
-            lbl.setStyleSheet("font-weight: bold; font-style: italic;")
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            bubble_content_layout.addWidget(lbl)
-
-            if cached_data:
-                # Jika sudah didekripsi/cache, tampilkan teksnya juga
-                decrypted_lbl = QLabel(f'"{cached_data}"')
-                decrypted_lbl.setWordWrap(True)
-                decrypted_lbl.setStyleSheet(f"color: {self.COLOR_TEXT}; font-style: italic; margin-top: 5px;")
-                decrypted_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                bubble_content_layout.addWidget(decrypted_lbl)
-            
-            hint = QLabel("(Klik untuk Putar/Dekripsi)")
-            hint.setStyleSheet(f"color: {self.COLOR_TEXT_SUBTLE}; font-size: 10px;")
-            hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            bubble_content_layout.addWidget(hint)
-        # ---------------------------
-
         else:
             content_label = QLabel("[Pesan tidak dikenal]")
             content_label.setMaximumWidth(content_max_width)
@@ -897,7 +663,6 @@ class ChatPage(QWidget):
             content_label.setMinimumHeight(30)
             bubble_content_layout.addWidget(content_label)
         
-        # --- FOOTER (Time & Refresh) ---
         bottom_layout = QHBoxLayout()
         bottom_layout.setContentsMargins(0, 5, 0, 0)
         
